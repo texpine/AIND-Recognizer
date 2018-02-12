@@ -13,10 +13,17 @@ class ModelSelector(object):
     base class for model selection (strategy design pattern)
     '''
 
-    def __init__(self, all_word_sequences: dict, all_word_Xlengths: dict, this_word: str,
-                 n_constant=3,
-                 min_n_components=2, max_n_components=10,
-                 random_state=14, verbose=False):
+    def __init__(
+            self, 
+            all_word_sequences: dict, 
+            all_word_Xlengths: dict, 
+            this_word: str,
+            n_constant=3,
+            min_n_components=2, 
+            max_n_components=10,
+            random_state=14, 
+            verbose=False
+        ):
         self.words = all_word_sequences
         self.hwords = all_word_Xlengths
         self.sequences = all_word_sequences[this_word]
@@ -75,9 +82,25 @@ class SelectorBIC(ModelSelector):
         :return: GaussianHMM object
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        result = self.n_constant
+        lowest_score = np.inf        
+        try:
+            # folder = KFold(random_state=self.random_state, n_splits=3)
+            for s in range(self.min_n_components, self.max_n_components+1):
+                model = self.base_model(s)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+                logL = model.score(self.X, self.lengths)
+                p = s**2 + 2 * s * model.n_features - 1
+                logN = math.log(sum(self.lengths))
+
+                bic = -2 * logL + p * logN
+                if bic < lowest_score:
+                    lowest_score = bic
+                    result = s      
+        except:
+            pass
+
+        return self.base_model(result)
 
 
 class SelectorDIC(ModelSelector):
@@ -92,18 +115,60 @@ class SelectorDIC(ModelSelector):
 
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        result = None
+        best_score = -np.inf
+
+        try:
+            for s in range(self.min_n_components, self.max_n_components+1):
+                model = self.base_model(s)
+                scores = []
+                for word, (X, lenghts) in self.hwords.items():
+                    if word != self.this_word:
+                        scores.append(model.score(X, lenghts))
+                #fixing the formula below
+                logL = model.score(self.X, self.lengths)
+                dic = logL - (1/(len(self.words)-1)) * sum(scores)
+                if dic > best_score:
+                    best_score = dic
+                    result = model     
+        except:
+            pass
+
+        return result
 
 
 class SelectorCV(ModelSelector):
-    ''' select best model based on average log Likelihood of cross-validation folds
-
-    '''
-
-    def select(self):
+    ''' select best model based on average log Likelihood of cross-validation folds '''
+    def select(self):        
         warnings.filterwarnings("ignore", category=DeprecationWarning)
+        result = self.n_constant
+        best_score = -np.inf        
+        try:
+            folder = KFold(random_state=self.random_state, n_splits=3)
+            for s in range(self.min_n_components, self.max_n_components+1):
+                score_list = []
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+                for train_indices, test_indices in folder.split(self.sequences):
+                    X_train, y_train = combine_sequences(train_indices, self.sequences)
+                    X_test, y_test = combine_sequences(test_indices, self.sequences)
+
+                    hmm = GaussianHMM(
+                                n_components=s, 
+                                n_iter=1000,
+                                covariance_type="diag",
+                                random_state=self.random_state
+                            ).fit(X_train, y_train)
+
+                    score = hmm.score(X_test, y_test)
+                    score_list.append(score)
+
+                average_score = np.mean(score_list)
+                if average_score > best_score:
+                    best_score = average_score
+                    result = s       
+        except:
+            pass
+
+        return self.base_model(result)
